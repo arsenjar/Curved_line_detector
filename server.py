@@ -1,78 +1,77 @@
 import cv2
+import threading
 from flask import Flask, Response, request, jsonify
 from flask_cors import CORS
-import time
-
 from LineDetector import LineDetector
 
-LineDetector = LineDetector()
 app = Flask(__name__)
 CORS(app)
+
+# --- Configuration ---
 HOST_IP = '0.0.0.0'
 PORT = 8080
+# The source stream
+STREAM_URL = "http://192.168.240.150:8080/video_feed"
 
-camera = cv2.VideoCapture(0)
+# --- Global Variables ---
+line_detector = LineDetector()  # Note: Use lowercase for instance
+last_frame = None
+lock = threading.Lock()  # Prevents threads from reading while the buffer is updating
 
-camera.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-camera.set(cv2.CAP_PROP_FPS, 30)
 
-if not camera.isOpened():
-    print("Error: Could not open camera.")
+def update_camera():
+    """Background thread to constantly fetch the latest frame."""
+    global last_frame
+    cap = cv2.VideoCapture(STREAM_URL)
 
-current_state = {
-    'up': False,
-    'down': False,
-    'left': False,
-    'right': False,
-    'command': 'stop'
-}
-def generate_frames_processed():
     while True:
-        # Read the camera frame
-        success, frame = camera.read()
+        success, frame = cap.read()
         if not success:
-            break
-        try:
-            frame = LineDetector.process_frame(frame)
-        except:
-            pass
-        (flag, encodedImage) = cv2.imencode(".jpg", frame)
+            print("Lost connection to camera. Reconnecting...")
+            cap.release()
+            cv2.waitKey(2000)  # Wait 2 seconds before retry
+            cap = cv2.VideoCapture(STREAM_URL)
+            continue
 
-        if not flag:
+        with lock:
+            last_frame = frame.copy()
+
+
+# Start the background camera thread immediately
+cam_thread = threading.Thread(target=update_camera, daemon=True)
+cam_thread.start()
+
+
+def generate_frames(processed=False):
+    while True:
+        with lock:
+            if last_frame is None:
+                continue
+            frame = last_frame.copy()
+
+        if processed:
+            frame = line_detector.process_frame(frame)
+            print("Frame processed")
+            # except Exception as e:
+            #     pass  # Fallback to raw frame if processing fails
+
+        ret, buffer = cv2.imencode('.jpg', frame)
+        if not ret:
             continue
 
         yield (b'--frame\r\n'
-               b'Content-Type: image/jpeg\r\n\r\n' +
-               bytearray(encodedImage) + b'\r\n')
-
-def generate_frames():
-    while True:
-        # Read the camera frame
-        success, frame = camera.read()
-        if not success:
-            break
-
-        (flag, encodedImage) = cv2.imencode(".jpg", frame)
-
-        if not flag:
-            continue
-
-        yield (b'--frame\r\n'
-               b'Content-Type: image/jpeg\r\n\r\n' +
-               bytearray(encodedImage) + b'\r\n')
+               b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
 
 
 @app.route('/video_feed')
 def video_feed():
-    return Response(
-        generate_frames(),
-        mimetype='multipart/x-mixed-replace; boundary=frame'
-    )
+    return Response(generate_frames(processed=False),
+                    mimetype='multipart/x-mixed-replace; boundary=frame')
+
 
 @app.route('/video_feed/processed')
 def video_feed_processed():
-    return Response(generate_frames_processed(),
+    return Response(generate_frames(processed=True),
                     mimetype='multipart/x-mixed-replace; boundary=frame')
 
 @app.route('/control/set', methods=['POST'])
@@ -90,9 +89,5 @@ def control_set():
 
 
 if __name__ == '__main__':
-    print(f"Streaming server running on http://{HOST_IP}:{PORT}")
-    try:
-        app.run(host=HOST_IP, port=PORT, threaded=True)
-    finally:
-        # Release the camera resource when the server is stopped
-        camera.release()
+    # Using threaded=True is okay now because they don't fight over the camera object
+    app.run(host=HOST_IP, port=PORT, threaded=True)

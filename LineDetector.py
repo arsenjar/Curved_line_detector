@@ -7,6 +7,21 @@ class LineDetector:
     def __init__(self):
         pass
 
+    def transform(self, frame):
+        pts1 = np.float32([[0, 260], [640, 260],
+                           [0, 400], [640, 400]])
+        pts2 = np.float32([[0, 0], [400, 0],
+                           [0, 640], [400, 640]])
+
+        # Apply Perspective Transform Algorithm
+        try:
+            matrix = cv2.getPerspectiveTransform(pts1, pts2)
+            result = cv2.warpPerspective(frame, matrix, (500, 600))
+        except:
+            raise "No Lines Detected"
+
+        return result
+
     # getting binary mask for the lines
     def threshold_img(self, image):
         hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV) # Making image in hsv formate
@@ -104,7 +119,8 @@ class LineDetector:
         return smoothed_data, mid_points
 
     def process_frame(self, frame):
-        optimized_frame = self.optimize_frame(frame) # frame optimization
+        optimized_frame = self.transform(frame)
+        optimized_frame = self.optimize_frame(optimized_frame) # frame optimization
         black_and_white_mask = self.threshold_img(optimized_frame) # binary mask
         resized_frame = cv2.resize(frame, (640, 480), interpolation=cv2.INTER_AREA)
 
