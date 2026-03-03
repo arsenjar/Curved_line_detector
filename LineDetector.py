@@ -119,30 +119,33 @@ class LineDetector:
         return smoothed_data, mid_points
 
     def process_frame(self, frame):
-        optimized_frame = self.transform(frame)
-        optimized_frame = self.optimize_frame(optimized_frame) # frame optimization
-        black_and_white_mask = self.threshold_img(optimized_frame) # binary mask
-        resized_frame = cv2.resize(frame, (640, 480), interpolation=cv2.INTER_AREA)
+        try:
+            optimized_frame = self.optimize_frame(frame) # frame optimization
+            transformed_frame = self.transform(optimized_frame)
+            black_and_white_mask = self.threshold_img(transformed_frame) # binary mask
+            resized_frame = cv2.resize(frame, (640, 480), interpolation=cv2.INTER_AREA)
+            transformed_frame_orig =  self.transform(frame)
+            resized_frame = transformed_frame_orig
+            # morphology
+            morphology_mask = self.Morphology(black_and_white_mask)
+            # detection
+            line_clusters = self.skeletonization_img(morphology_mask)
 
-        # morphology
-        morphology_mask = self.Morphology(black_and_white_mask)
-        # detection
-        line_clusters = self.skeletonization_img(morphology_mask)
+            colors = [(255, 0, 0), (0, 255, 0)]  # BGR
+            for i, cluster in enumerate(line_clusters):
+                for x, y in cluster:
+                    cv2.circle(resized_frame, (int(x), int(y)), 2, colors[i], -1)
 
-        colors = [(255, 0, 0), (0, 255, 0)]  # BGR
-        for i, cluster in enumerate(line_clusters):
-            for x, y in cluster:
-                cv2.circle(resized_frame, (int(x), int(y)), 2, colors[i], -1)
+            if len(line_clusters) > 0:
+                #middle line
+                mid_x, mid_y = self.middle_point(line_clusters)
+                smoothed_data,  mid_points = self.midle_line(line_clusters)
 
-        if len(line_clusters) > 0:
-            #middle line
-            mid_x, mid_y = self.middle_point(line_clusters)
-            smoothed_data,  mid_points = self.midle_line(line_clusters)
+                for i in range(len(mid_points) - 1):
+                    cv2.line(resized_frame, smoothed_data[i], smoothed_data[i + 1], (0, 0, 255), 2)
 
-            for i in range(len(mid_points) - 1):
-                cv2.line(resized_frame, smoothed_data[i], smoothed_data[i + 1], (0, 0, 255), 2)
-
-            # graphing results
-            cv2.circle(resized_frame, (int(mid_x), int(mid_y)), 8, (255, 255, 255), -1)  # dot
-
+                # graphing results
+                cv2.circle(resized_frame, (int(mid_x), int(mid_y)), 8, (255, 255, 255), -1)  # dot
+        except:
+            raise "Error"
         return resized_frame
